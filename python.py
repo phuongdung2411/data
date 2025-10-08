@@ -226,11 +226,19 @@ def get_chat_session(client):
     """Khởi tạo hoặc trả về đối tượng Chat Session từ Gemini."""
     if client and "chat_session" not in st.session_state:
         try:
-            # Khởi tạo một đối tượng chat mới
-            st.session_state.chat_session = client.chats.create(
+            # 1. Khởi tạo một đối tượng chat mới (KHÔNG có system_instruction)
+            chat = client.chats.create(
                 model=MODEL_NAME_CHAT,
-                system_instruction="Bạn là một trợ lý ảo thân thiện và hữu ích, chuyên giải đáp mọi thắc mắc của người dùng. Hãy trả lời bằng tiếng Việt."
             )
+            
+            # 2. Định nghĩa hướng dẫn hệ thống
+            system_instruction = "Bạn là một trợ lý ảo thân thiện và hữu ích, chuyên giải đáp mọi thắc mắc của người dùng. Hãy trả lời bằng tiếng Việt."
+
+            # 3. Gửi hướng dẫn hệ thống như thông điệp đầu tiên
+            # Chúng ta sử dụng 'role: user' và sau đó gọi send_message để thiết lập ngữ cảnh cho cuộc trò chuyện
+            chat.send_message(system_instruction)
+            
+            st.session_state.chat_session = chat
             st.session_state.messages = [] # Lưu trữ lịch sử tin nhắn
         except APIError as e:
             # Bắt lỗi API cụ thể (ví dụ: xác thực thất bại)
