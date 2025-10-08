@@ -19,41 +19,36 @@ def process_financial_data(df):
     # Đảm bảo các giá trị là số để tính toán
     numeric_cols = ['Năm trước', 'Năm sau']
     for col in numeric_cols:
-        # SỬA LỖI: Cần truyền df[col] (Series) vào pd.to_numeric() thay vì chỉ truyền col (String).
+        # Đảm bảo chuyển đổi Series (df[col]) sang số, và điền 0 cho NaN
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     
     # 1. Tính Tốc độ Tăng trưởng
-    # Dùng .replace(0, 1e-9) cho Series Pandas để tránh lỗi chia cho 0
     df['Tốc độ tăng trưởng (%)'] = (
         (df['Năm sau'] - df['Năm trước']) / df['Năm trước'].replace(0, 1e-9)
     ) * 100
 
     # 2. Tính Tỷ trọng theo Tổng Tài sản
-    # Lọc chỉ tiêu "TỔNG CỘNG TÀI SẢN"
     tong_tai_san_row = df[df['Chỉ tiêu'].str.contains('TỔNG CỘNG TÀI SẢN', case=False, na=False)]
     
     if tong_tai_san_row.empty:
-        # Nếu không tìm thấy, cố gắng tính tổng để có một giá trị tổng tài sản gần đúng
-        # Đây là một biện pháp phòng vệ, nếu file Excel chuẩn, dòng này sẽ không chạy
-        if df['Năm trước'].sum() > 0:
+        # Nếu không tìm thấy dòng "TỔNG CỘNG TÀI SẢN"
+        if df['Năm trước'].sum() > 0 or df['Năm sau'].sum() > 0:
+            # Sử dụng tổng của các cột làm giá trị tổng tài sản (chỉ là giải pháp dự phòng)
             tong_tai_san_N_1 = df['Năm trước'].sum()
             tong_tai_san_N = df['Năm sau'].sum()
         else:
-             raise ValueError("Không tìm thấy chỉ tiêu 'TỔNG CỘNG TÀI SẢN' và tổng dữ liệu cũng bằng 0.")
+             raise ValueError("Không tìm thấy chỉ tiêu 'TỔNG CỘNG TÀI SẢN' và không có dữ liệu để tổng hợp.")
     else:
         tong_tai_san_N_1 = tong_tai_san_row['Năm trước'].iloc[0]
         tong_tai_san_N = tong_tai_san_row['Năm sau'].iloc[0]
 
-    # ******************************* PHẦN SỬA LỖI BẮT ĐẦU *******************************
     # Xử lý trường hợp mẫu số bằng 0 thủ công
-    
     divisor_N_1 = tong_tai_san_N_1 if tong_tai_san_N_1 != 0 else 1e-9
     divisor_N = tong_tai_san_N if tong_tai_san_N != 0 else 1e-9
 
     # Tính tỷ trọng với mẫu số đã được xử lý
     df['Tỷ trọng Năm trước (%)'] = (df['Năm trước'] / divisor_N_1) * 100
     df['Tỷ trọng Năm sau (%)'] = (df['Năm sau'] / divisor_N) * 100
-    # ******************************* PHẦN SỬA LỖI KẾT THÚC *******************************
     
     return df
 
@@ -162,7 +157,7 @@ if uploaded_file is not None:
             tt_N = f"{thanh_toan_hien_hanh_N:.2f}" if isinstance(thanh_toan_hien_hanh_N, float) else thanh_toan_hien_hanh_N
             tt_N_1 = f"{thanh_toan_hien_hanh_N_1:.2f}" if isinstance(thanh_toan_hien_hanh_N_1, float) else thanh_toan_hien_hanh_N_1
             
-            # Lấy tăng trưởng TSNH an toàn hơn (dùng .iloc[0] thay vì cố gắng lấy từ Series rỗng)
+            # Lấy tăng trưởng TSNH an toàn hơn
             try:
                 tsnh_growth = df_processed[df_processed['Chỉ tiêu'].str.contains('TÀI SẢN NGẮN HẠN', case=False, na=False)]['Tốc độ tăng trưởng (%)'].iloc[0]
                 tsnh_growth_str = f"{tsnh_growth:.2f}%"
@@ -216,35 +211,42 @@ MODEL_NAME_CHAT = 'gemini-2.5-flash'
 
 # 1. Khởi tạo Client và Session
 try:
+    client = None
     if not api_key:
         st.warning("⚠️ Vui lòng cấu hình Khóa **'GEMINI_API_KEY'** trong Streamlit Secrets để sử dụng tính năng chat.")
-        client = None
     else:
         client = genai.Client(api_key=api_key)
 
 except Exception as e:
-    st.error(f"Lỗi khi khởi tạo Gemini Client cho Chat: {e}")
+    st.error(f"Lỗi khi khởi tạo Gemini Client: {e}")
     client = None
 
 # Hàm khởi tạo hoặc lấy đối tượng chat
 def get_chat_session(client):
     """Khởi tạo hoặc trả về đối tượng Chat Session từ Gemini."""
     if client and "chat_session" not in st.session_state:
-        # Khởi tạo một đối tượng chat mới
-        st.session_state.chat_session = client.chats.create(
-            model=MODEL_NAME_CHAT,
-            system_instruction="Bạn là một trợ lý ảo thân thiện và hữu ích, chuyên giải đáp mọi thắc mắc của người dùng. Hãy trả lời bằng tiếng Việt."
-        )
-        st.session_state.messages = [] # Lưu trữ lịch sử tin nhắn
-    
-    # Trả về session nếu client hợp lệ, nếu không trả về None
-    return st.session_state.chat_session if client else None
+        try:
+            # Khởi tạo một đối tượng chat mới
+            st.session_state.chat_session = client.chats.create(
+                model=MODEL_NAME_CHAT,
+                system_instruction="Bạn là một trợ lý ảo thân thiện và hữu ích, chuyên giải đáp mọi thắc mắc của người dùng. Hãy trả lời bằng tiếng Việt."
+            )
+            st.session_state.messages = [] # Lưu trữ lịch sử tin nhắn
+        except APIError as e:
+            # Bắt lỗi API cụ thể (ví dụ: xác thực thất bại)
+            st.error(f"Lỗi API khi khởi tạo phiên chat: Vui lòng kiểm tra Khóa API của bạn có hợp lệ không. Chi tiết: {e}")
+            return None
+        except Exception as e:
+            st.error(f"Lỗi không xác định khi khởi tạo phiên chat: {e}")
+            return None
+
+    # Trả về session nếu client hợp lệ và session đã được tạo
+    return st.session_state.chat_session if client and "chat_session" in st.session_state else None
 
 chat = get_chat_session(client)
 
 if chat:
     # 2. Hiển thị lịch sử tin nhắn
-    # Đảm bảo messages đã được khởi tạo
     if "messages" not in st.session_state:
         st.session_state.messages = []
         
@@ -271,27 +273,3 @@ if chat:
                     response = chat.send_message(prompt, stream=True)
                     
                     # Tạo một placeholder để viết câu trả lời từng phần
-                    full_response = ""
-                    message_placeholder = st.empty()
-                    
-                    for chunk in response:
-                        # Nối các phần nội dung nhận được
-                        full_response += chunk.text
-                        # Cập nhật placeholder với nội dung đã nối
-                        message_placeholder.markdown(full_response + "▌") # Thêm con trỏ nhấp nháy
-
-                    # Cập nhật lại với nội dung hoàn chỉnh
-                    message_placeholder.markdown(full_response)
-                    
-                    # 4. Lưu phản hồi vào lịch sử
-                    st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-                except Exception as e:
-                    error_message = f"Đã xảy ra lỗi khi giao tiếp với Gemini: {e}"
-                    st.error(error_message)
-                    # Xóa tin nhắn cuối cùng của người dùng nếu có lỗi
-                    if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-                        st.session_state.messages.pop()
-else:
-    # Chỉ hiện thị thông báo nếu client không được khởi tạo
-    pass
