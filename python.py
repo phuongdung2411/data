@@ -273,3 +273,27 @@ if chat:
                     response = chat.send_message(prompt, stream=True)
                     
                     # Tạo một placeholder để viết câu trả lời từng phần
+                    full_response = ""
+                    message_placeholder = st.empty()
+                    
+                    for chunk in response:
+                        # Nối các phần nội dung nhận được
+                        full_response += chunk.text
+                        # Cập nhật placeholder với nội dung đã nối
+                        message_placeholder.markdown(full_response + "▌") # Thêm con trỏ nhấp nháy
+
+                    # Cập nhật lại với nội dung hoàn chỉnh
+                    message_placeholder.markdown(full_response)
+                    
+                    # 4. Lưu phản hồi vào lịch sử
+                    st.session_state.messages.append({"role": "assistant", "content": full_response})
+
+                except Exception as e:
+                    error_message = f"Đã xảy ra lỗi khi giao tiếp với Gemini: {e}"
+                    st.error(error_message)
+                    # Xóa tin nhắn cuối cùng của người dùng nếu có lỗi
+                    if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+                        st.session_state.messages.pop()
+else:
+    # Nếu chat không được khởi tạo (do lỗi API hoặc thiếu khóa), không làm gì thêm
+    pass
